@@ -1,3 +1,167 @@
+import streamlit as st
+import hashlib
+import json
+import time
+from typing import List, Dict, Any
+import pandas as pd
+from io import BytesIO
+
+# -----------------------
+# Blockchain Class
+# -----------------------
+class CertificateBlockchain:
+    def __init__(self):
+        self.chain: List[Dict[str, Any]] = []
+        self.pending_certificates: List[Dict[str, Any]] = []
+        self.certificate_counter = 0
+        self.new_block(proof=100, previous_hash="1")
+
+    def new_block(self, proof: int, previous_hash: str = None) -> Dict[str, Any]:
+        block_certificates = [tx.copy() for tx in self.pending_certificates]
+        block = {
+            "index": len(self.chain) + 1,
+            "timestamp": time.time(),
+            "certificates": block_certificates,
+            "proof": proof,
+            "previous_hash": previous_hash or self.hash(self.chain[-1]),
+        }
+        self.pending_certificates = []
+        block["hash"] = self.hash(block)
+        self.chain.append(block)
+        return block
+
+    def add_certificate(self, student_name: str, course: str, university: str,
+                        university_id: str, issue_date: str, file_name: str, file_bytes: bytes = None) -> int:
+        self.certificate_counter += 1
+        cert = {
+            "certificate_id": self.certificate_counter,
+            "student_name": student_name,
+            "course": course,
+            "university": university,
+            "university_id": university_id,
+            "issue_date": issue_date,
+            "file_name": file_name,
+            "file_bytes": file_bytes,
+            "timestamp": time.time()
+        }
+        self.pending_certificates.append(cert)
+        return self.certificate_counter
+
+    @staticmethod
+    def hash(block: Dict[str, Any]) -> str:
+        block_copy = block.copy()
+        block_copy.pop("hash", None)
+        # Remove binary file data before hashing
+        for cert in block_copy.get("certificates", []):
+            if "file_bytes" in cert:
+                cert["file_bytes"] = None
+        block_string = json.dumps(block_copy, sort_keys=True).encode()
+        return hashlib.sha256(block_string).hexdigest()
+
+    @property
+    def last_block(self) -> Dict[str, Any]:
+        return self.chain[-1]
+
+    def is_chain_valid(self) -> bool:
+        for i in range(1, len(self.chain)):
+            prev = self.chain[i - 1]
+            curr = self.chain[i]
+            if curr["previous_hash"] != prev["hash"]:
+                return False
+            if curr["hash"] != self.hash(curr):
+                return False
+        return True
+
+    def verify_certificate(self, student_name: str) -> List[Dict[str, Any]]:
+        results = []
+        for block in self.chain:
+            for cert in block["certificates"]:
+                if cert["student_name"].lower() == student_name.lower():
+                    results.append({
+                        "Block": block["index"],
+                        "Certificate ID": cert["certificate_id"],
+                        "Student": cert["student_name"],
+                        "Course": cert["course"],
+                        "University": cert["university"],
+                        "University ID": cert["university_id"],
+                        "Issue Date": cert["issue_date"],
+                        "Certificate File": cert["file_name"],
+                        "File Bytes": cert.get("file_bytes"),
+                        "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S",
+                                                   time.localtime(cert["timestamp"]))
+                    })
+        return results
+
+    def all_certificates_summary(self) -> pd.DataFrame:
+        rows = []
+        for block in self.chain:
+            for cert in block["certificates"]:
+                rows.append({
+                    "Certificate ID": cert["certificate_id"],
+                    "Student": cert["student_name"],
+                    "Course": cert["course"],
+                    "University": cert["university"],
+                    "University ID": cert["university_id"],
+                    "Issue Date": cert["issue_date"],
+                    "Certificate File": cert["file_name"],
+                    "Block": block["index"],
+                    "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S",
+                                               time.localtime(cert["timestamp"]))
+                })
+        return pd.DataFrame(rows)
+
+# -----------------------
+# Streamlit App
+# -----------------------
+st.set_page_config(page_title="🎓 Blockchain Certificate Verification",
+                   layout="wide", page_icon="🎓")
+
+# Initialize blockchain in session state
+if "cert_chain" not in st.session_state:
+    st.session_state.cert_chain = CertificateBlockchain()
+
+bc: CertificateBlockchain = st.session_state.cert_chain
+
+# Sidebar navigation
+st.sidebar.title("🎓 Certificate System")
+menu = st.sidebar.radio("Navigate", ["🏠 Home", "🆕 Issue Certificate", "🔍 Verify Certificate", "📊 Ledger"])
+
+# --- Home ---
+if menu == "🏠 Home":
+    st.markdown("<h1 style='text-align: center; color: #4B0082;'>🎓 Welcome to Blockchain Certificate System</h1>", unsafe_allow_html=True)
+    st.markdown("""
+    This system allows universities to issue tamper-proof certificates using blockchain technology.
+    - Issue new certificates securely.
+    - Verify any student's certificate instantly.
+    - View the complete blockchain ledger.
+    """)
+    st.image("https://images.unsplash.com/photo-1606813909315-7f82e8f30c12?auto=format&fit=crop&w=800&q=80",
+             use_container_width=True)
+
+# --- Issue Certificate ---
+elif menu == "🆕 Issue Certificate":
+    st.header("🆕 Issue New Certificate")
+    st.success("Fill the form below to issue a new certificate.")
+    with st.form("cert_form", clear_on_submit=True):
+        student_name = st.text_input("Student Name")
+        course = st.selectbox("Course", ["BBA-FINTECH", "BBA-BA", "BBA-LSCM", "BBA-DM", "BBA-HR"])
+        university = st.text_input("University")
+        university_id = st.text_input("University ID")
+        issue_date = st.date_input("Issue Date")
+        file = st.file_uploader("Upload Certificate (PDF/JPG/PNG)", type=["pdf", "jpg", "jpeg", "png"])
+
+        submitted = st.form_submit_button("Issue Certificate")
+        if submitted:
+            if student_name and university and university_id:
+                file_name = file.name if file else "Not Provided"
+                file_bytes = file.read() if file else None
+                cert_id = bc.add_certificate(student_name, course, university, university_id,
+                                             str(issue_date), file_name, file_bytes)
+                block = bc.new_block(proof=123)
+                st.success(f"✅ Certificate #{cert_id} issued to {student_name} in Block {block['index']}.")
+            else:
+                st.error("Please fill all required fields!")
+
 # --- Verify Certificate ---
 elif menu == "🔍 Verify Certificate":
     st.header("🔍 Verify Student Certificate")
@@ -35,16 +199,37 @@ elif menu == "🔍 Verify Certificate":
                                 file_name=cert['Certificate File'],
                                 mime='application/pdf'
                             )
-                    
-                    # Download certificate details as JSON
-                    cert_json = json.dumps({k: v for k, v in cert.items() if k != "File Bytes"}, indent=4)
-                    st.download_button(
-                        label="Download Certificate Details (JSON)",
-                        data=cert_json,
-                        file_name=f"certificate_{cert['Certificate ID']}.json",
-                        mime="application/json"
-                    )
             else:
                 st.warning("No certificates found for this student.")
         else:
             st.error("Please enter a student name to verify.")
+
+# --- Ledger ---
+elif menu == "📊 Ledger":
+    st.header("📊 Blockchain Ledger Overview")
+    
+    if not bc.chain:
+        st.info("No blocks in the blockchain yet.")
+    else:
+        for block in bc.chain:
+            st.markdown(f"""
+                <div style="padding:10px; border:3px solid #4B0082; border-radius:10px; margin-bottom:20px; background-color:#e6e6fa;">
+                <h3 style="color:#4B0082;">🧱 Block {block['index']}</h3>
+                <p><b>Proof:</b> {block['proof']} &nbsp;&nbsp; <b>Previous Hash:</b> {block['previous_hash']}</p>
+                <p><b>Timestamp:</b> {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(block['timestamp']))}</p>
+            """, unsafe_allow_html=True)
+            
+            if block["certificates"]:
+                for cert in block["certificates"]:
+                    st.markdown(f"""
+                        <div style="padding:10px; border:2px solid #4B0082; border-radius:8px; margin-bottom:10px; background-color:#f8f8ff;">
+                        <h5 style="color:#4B0082;">🎓 Certificate ID: {cert['certificate_id']}</h5>
+                        <p><b>Student Name:</b> {cert['student_name']}</p>
+                        <p><b>Course:</b> {cert['course']}</p>
+                        <p><b>University:</b> {cert['university']}</p>
+                        <p><b>University ID:</b> {cert['university_id']}</p>
+                        <p><b>Issue Date:</b> {cert['issue_date']}</p>
+                        <p><b>File:</b> {cert['file_name']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
