@@ -103,23 +103,36 @@ class CertificateBlockchain:
                 })
         return pd.DataFrame(rows)
 
-
 # -----------------------
 # Streamlit App
 # -----------------------
-st.set_page_config(page_title="🎓 Blockchain Certificate Verification", layout="wide")
+st.set_page_config(page_title="🎓 Blockchain Certificate Verification", layout="wide", page_icon="🎓")
 
+# Initialize blockchain in session state
 if "cert_chain" not in st.session_state:
     st.session_state.cert_chain = CertificateBlockchain()
 
 bc: CertificateBlockchain = st.session_state.cert_chain
 
+# Sidebar navigation
 st.sidebar.title("🎓 Certificate System")
 menu = st.sidebar.radio("Navigate", ["🏠 Home", "🆕 Issue Certificate", "🔍 Verify Certificate", "📊 Ledger"])
 
+# --- Home ---
+if menu == "🏠 Home":
+    st.markdown("<h1 style='text-align: center; color: #4B0082;'>🎓 Welcome to Blockchain Certificate System</h1>", unsafe_allow_html=True)
+    st.markdown("""
+    This system allows universities to issue tamper-proof certificates using blockchain technology.
+    - Issue new certificates securely.
+    - Verify any student's certificate instantly.
+    - View the complete blockchain ledger.
+    """)
+    st.image("https://images.unsplash.com/photo-1606813909315-7f82e8f30c12?auto=format&fit=crop&w=800&q=80", use_column_width=True)
+
 # --- Issue Certificate ---
-if menu == "🆕 Issue Certificate":
+elif menu == "🆕 Issue Certificate":
     st.header("🆕 Issue New Certificate")
+    st.success("Fill the form below to issue a new certificate.")
     with st.form("cert_form", clear_on_submit=True):
         student_name = st.text_input("Student Name")
         course = st.selectbox("Course", ["BBA-FINTECH", "BBA-BA", "BBA-LSCM", "BBA-DM", "BBA-HR"])
@@ -129,9 +142,35 @@ if menu == "🆕 Issue Certificate":
         file = st.file_uploader("Upload Certificate (PDF/JPG/PNG)", type=["pdf", "jpg", "jpeg", "png"])
 
         submitted = st.form_submit_button("Issue Certificate")
-        if submitted and student_name and university and university_id:
-            file_name = file.name if file else "Not Provided"
-            cert_id = bc.add_certificate(student_name, course, university, university_id,
-                                         str(issue_date), file_name)
-            block = bc.new_block(proof=123)
-            st.success(f"✅ Certificate #{cert_id} issued to {student_name} in Block {block['index']}.")
+        if submitted:
+            if student_name and university and university_id:
+                file_name = file.name if file else "Not Provided"
+                cert_id = bc.add_certificate(student_name, course, university, university_id, str(issue_date), file_name)
+                block = bc.new_block(proof=123)
+                st.success(f"✅ Certificate #{cert_id} issued to {student_name} in Block {block['index']}.")
+            else:
+                st.error("Please fill all required fields!")
+
+# --- Verify Certificate ---
+elif menu == "🔍 Verify Certificate":
+    st.header("🔍 Verify Student Certificate")
+    student_to_verify = st.text_input("Enter Student Name")
+    if st.button("Verify"):
+        if student_to_verify:
+            results = bc.verify_certificate(student_to_verify)
+            if results:
+                st.success(f"Found {len(results)} certificate(s) for {student_to_verify}:")
+                st.dataframe(pd.DataFrame(results))
+            else:
+                st.warning("No certificates found for this student.")
+        else:
+            st.error("Please enter a student name to verify.")
+
+# --- Ledger ---
+elif menu == "📊 Ledger":
+    st.header("📊 Complete Certificate Ledger")
+    df = bc.all_certificates_summary()
+    if not df.empty:
+        st.dataframe(df)
+    else:
+        st.info("No certificates have been issued yet.")
