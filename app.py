@@ -4,6 +4,7 @@ import json
 import time
 from typing import List, Dict, Any
 import pandas as pd
+from io import BytesIO
 
 # -----------------------
 # Blockchain Class
@@ -30,7 +31,7 @@ class CertificateBlockchain:
         return block
 
     def add_certificate(self, student_name: str, course: str, university: str,
-                        university_id: str, issue_date: str, file_name: str) -> int:
+                        university_id: str, issue_date: str, file_name: str, file_bytes: bytes = None) -> int:
         self.certificate_counter += 1
         cert = {
             "certificate_id": self.certificate_counter,
@@ -40,6 +41,7 @@ class CertificateBlockchain:
             "university_id": university_id,
             "issue_date": issue_date,
             "file_name": file_name,
+            "file_bytes": file_bytes,
             "timestamp": time.time()
         }
         self.pending_certificates.append(cert)
@@ -80,6 +82,7 @@ class CertificateBlockchain:
                         "University ID": cert["university_id"],
                         "Issue Date": cert["issue_date"],
                         "Certificate File": cert["file_name"],
+                        "File Bytes": cert.get("file_bytes"),
                         "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S",
                                                    time.localtime(cert["timestamp"]))
                     })
@@ -106,7 +109,8 @@ class CertificateBlockchain:
 # -----------------------
 # Streamlit App
 # -----------------------
-st.set_page_config(page_title="🎓 Blockchain Certificate Verification", layout="wide", page_icon="🎓")
+st.set_page_config(page_title="🎓 Blockchain Certificate Verification",
+                   layout="wide", page_icon="🎓")
 
 # Initialize blockchain in session state
 if "cert_chain" not in st.session_state:
@@ -127,7 +131,8 @@ if menu == "🏠 Home":
     - Verify any student's certificate instantly.
     - View the complete blockchain ledger.
     """)
-    st.image("https://images.unsplash.com/photo-1606813909315-7f82e8f30c12?auto=format&fit=crop&w=800&q=80", use_column_width=True)
+    st.image("https://images.unsplash.com/photo-1606813909315-7f82e8f30c12?auto=format&fit=crop&w=800&q=80",
+             use_container_width=True)
 
 # --- Issue Certificate ---
 elif menu == "🆕 Issue Certificate":
@@ -145,7 +150,9 @@ elif menu == "🆕 Issue Certificate":
         if submitted:
             if student_name and university and university_id:
                 file_name = file.name if file else "Not Provided"
-                cert_id = bc.add_certificate(student_name, course, university, university_id, str(issue_date), file_name)
+                file_bytes = file.read() if file else None
+                cert_id = bc.add_certificate(student_name, course, university, university_id,
+                                             str(issue_date), file_name, file_bytes)
                 block = bc.new_block(proof=123)
                 st.success(f"✅ Certificate #{cert_id} issued to {student_name} in Block {block['index']}.")
             else:
@@ -155,12 +162,39 @@ elif menu == "🆕 Issue Certificate":
 elif menu == "🔍 Verify Certificate":
     st.header("🔍 Verify Student Certificate")
     student_to_verify = st.text_input("Enter Student Name")
+    
     if st.button("Verify"):
         if student_to_verify:
             results = bc.verify_certificate(student_to_verify)
+            
             if results:
                 st.success(f"Found {len(results)} certificate(s) for {student_to_verify}:")
-                st.dataframe(pd.DataFrame(results))
+                
+                for cert in results:
+                    st.markdown(f"""
+                        <div style="padding:15px; border:2px solid #4B0082; border-radius:10px; margin-bottom:10px; background-color:#f0f8ff;">
+                        <h4 style="color:#4B0082;">🎓 Certificate ID: {cert['Certificate ID']}</h4>
+                        <p><b>Student Name:</b> {cert['Student']}</p>
+                        <p><b>Course:</b> {cert['Course']}</p>
+                        <p><b>University:</b> {cert['University']}</p>
+                        <p><b>University ID:</b> {cert['University ID']}</p>
+                        <p><b>Issue Date:</b> {cert['Issue Date']}</p>
+                        <p><b>Block:</b> {cert['Block']}</p>
+                        <p><b>Timestamp:</b> {cert['Timestamp']}</p>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Show image preview or PDF download
+                    if cert['File Bytes']:
+                        if cert['Certificate File'].lower().endswith((".jpg", ".jpeg", ".png")):
+                            st.image(cert['File Bytes'], caption=cert['Certificate File'], use_container_width=True)
+                        elif cert['Certificate File'].lower().endswith(".pdf"):
+                            st.download_button(
+                                label=f"Download {cert['Certificate File']}",
+                                data=cert['File Bytes'],
+                                file_name=cert['Certificate File'],
+                                mime='application/pdf'
+                            )
             else:
                 st.warning("No certificates found for this student.")
         else:
